@@ -172,11 +172,9 @@ toResponse domc response = do
 
 performStreamingRequest :: DOMContext -> Servant.Request -> BaseUrl -> RequestInit -> (StreamingResponse -> IO a) -> ClientM a
 performStreamingRequest domc req burl rinit k = do
-  ClientM $ lift $ lift $ Codensity $ \k1 -> do
-    response <- performFetch req burl rinit
-    body <- response ! ("body" :: JSString)
-    reader <- body # ("getReader" :: JSString) $ ()
-
+  ClientM $ lift $ lift $ Codensity $ \k1 -> bracket (performFetch req burl rinit) closeFetch $ \response ->
+    bracket (response ! ("body" :: JSString) >>= \body -> body # ("getReader" :: JSString) $ ())
+    (\reader -> reader # ("releaseLock" :: JSString) $ ()) $ \reader -> do
     let steps = flip runDOM domc $ do
           chunk <- readPromise =<< (reader # ("read" :: JSString) $ ())
           done <- fromMaybe False <$> (nullableToMaybe =<< (chunk ! ("done" :: JSString)))
@@ -192,3 +190,7 @@ performStreamingRequest domc req burl rinit k = do
 
     either (liftIO . throwIO) (k1 <=< liftIO . k) =<<
       toResponseGeneric response (pure $ S.SourceT (=<< steps))
+  where
+    closeFetch response = do
+      body <- response ! ("body" :: JSString)
+      body # ("cancel" :: JSString) $ ()
