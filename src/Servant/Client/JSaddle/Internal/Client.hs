@@ -15,9 +15,11 @@ import           Prelude ()
 import           Prelude.Compat
 
 import           Control.Exception
-                 (evaluate)
+                 (evaluate, toException)
 import           Control.Monad
                  (unless)
+import           Control.Monad.Catch
+                 (catch, throwM)
 import           Control.Monad.Codensity
 import           Control.Monad.Error.Class
                  (MonadError (..))
@@ -115,7 +117,9 @@ performRequest :: [Status] -> DOMContext -> Request -> ClientM Response
 performRequest acceptStatuses domc req = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
-  resp <- toResponse domc =<< performFetch req burl rinit `runDOM` domc
+  fetch <- performFetch req burl rinit `runDOM` domc `catch` \e@(JS.PromiseRejected _) ->
+    throwM $ ConnectionError $ toException e
+  resp <- toResponse domc fetch
 
   let status = statusCode (responseStatusCode resp)
   unless ((status >= 200 && status < 300) || status `elem` (statusCode <$> acceptStatuses)) $
@@ -127,7 +131,8 @@ performWithStreamingRequest :: DOMContext -> Request -> (StreamingResponse -> IO
 performWithStreamingRequest domc req k = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
-  performStreamingRequest domc req burl rinit k
+  performStreamingRequest domc req burl rinit k `catch` \e@(JS.PromiseRejected _) ->
+    throwM $ ConnectionError $ toException e
 
 mkFailureResponse :: BaseUrl -> Request -> ResponseF BSL.ByteString -> ClientError
 mkFailureResponse burl request =
