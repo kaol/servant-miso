@@ -1,8 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications  #-}
 
 module Servant.Client.JSaddle.Internal.Fetch where
 
@@ -13,6 +10,8 @@ import           Control.Exception
                  (toException, throwIO)
 import           Control.Monad
                  ((<=<), void)
+import           Control.Monad.Catch
+                 (try)
 import           Control.Monad.Codensity
 import           Control.Monad.Error.Class
                  (MonadError (..))
@@ -21,6 +20,8 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Morph
 import           Data.ByteString.Builder
                  (toLazyByteString)
+import           Data.Bifunctor
+                 (bimap)
 import qualified Data.ByteString.Char8                 as BS
 import qualified Data.ByteString.Lazy                  as L
 import           Data.CaseInsensitive
@@ -43,7 +44,7 @@ import qualified Servant.Client.Core                   as Servant
 import           Servant.Client.JSaddle.Internal.Types
 import qualified Servant.Types.SourceT as S
 
-performFetch :: Servant.Request -> BaseUrl -> RequestInit -> JSM Response
+performFetch :: Servant.Request -> BaseUrl -> RequestInit -> JSM (Either ClientError Response)
 performFetch req burl rinit = do
   let url = toUrl burl req
   -- TODO use headers from rinit and amend them instead, if available
@@ -115,7 +116,9 @@ performFetch req burl rinit = do
   rinit <# ("headers" :: JSString) $ headers
   rinit <# ("method" :: JSString) $ decodeUtf8Lenient $ requestMethod req
 
-  Response <$> (readPromise =<< jsg2 ("fetch" :: JSString) url rinit)
+  bimap (ConnectionError . toException @PromiseRejected) Response <$>
+    try (readPromise =<< jsg2 ("fetch" :: JSString) url rinit)
+
     where
       bsToJSVal x = do
         (x',_,_) <- ghcjsPure (GHCJS.Buffer.fromByteString $ L.toStrict x)
@@ -172,7 +175,9 @@ toResponse domc response = do
 
 performStreamingRequest :: DOMContext -> Servant.Request -> BaseUrl -> RequestInit -> (StreamingResponse -> IO a) -> ClientM a
 performStreamingRequest domc req burl rinit k = do
-  ClientM $ lift $ lift $ Codensity $ \k1 -> bracket (performFetch req burl rinit) closeFetch $ \response ->
+  ClientM $ lift $ lift $ Codensity $ \k1 -> bracket (performFetch req burl rinit)
+    (either (const $ pure ()) (fmap (const ()) . closeFetch)) $
+    either (liftIO . throwIO) $ \response ->
     bracket (response ! ("body" :: JSString) >>= \body -> body # ("getReader" :: JSString) $ ())
     (\reader -> reader # ("releaseLock" :: JSString) $ ()) $ \reader -> do
     let steps = flip runDOM domc $ do

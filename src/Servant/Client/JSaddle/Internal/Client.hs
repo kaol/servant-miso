@@ -1,13 +1,7 @@
 {-# LANGUAGE CPP                        #-}
 {-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE ViewPatterns               #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 module Servant.Client.JSaddle.Internal.Client where
 
@@ -15,12 +9,11 @@ import           Prelude ()
 import           Prelude.Compat
 
 import           Control.Exception
-                 (evaluate, toException)
+                 (evaluate)
 import           Control.Monad
                  (unless)
-import           Control.Monad.Catch
-                 (catch)
 import           Control.Monad.Codensity
+                 (Codensity(..))
 import           Control.Monad.Error.Class
                  (MonadError (..))
 import           Control.Monad.IO.Class
@@ -117,22 +110,23 @@ performRequest :: [Status] -> DOMContext -> Request -> ClientM Response
 performRequest acceptStatuses domc req = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
-  fetch <- performFetch req burl rinit `runDOM` domc `catch` \e@(JS.PromiseRejected _) ->
-    throwError $ ConnectionError $ toException e
-  resp <- toResponse domc fetch
+  performFetch req burl rinit `runDOM` domc >>=
+    either throwClientError
+    (\fetch -> do
+        resp <- toResponse domc fetch
 
-  let status = statusCode (responseStatusCode resp)
-  unless ((status >= 200 && status < 300) || status `elem` (statusCode <$> acceptStatuses)) $
-        throwError $ mkFailureResponse burl req resp
+        let status = statusCode (responseStatusCode resp)
+        unless ((status >= 200 && status < 300) || status `elem` (statusCode <$> acceptStatuses)) $
+          throwClientError $ mkFailureResponse burl req resp
 
-  pure resp
+        pure resp
+    )
 
 performWithStreamingRequest :: DOMContext -> Request -> (StreamingResponse -> IO a) -> ClientM a
 performWithStreamingRequest domc req k = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
-  performStreamingRequest domc req burl rinit k `catch` \e@(JS.PromiseRejected _) ->
-    throwError $ ConnectionError $ toException e
+  performStreamingRequest domc req burl rinit k
 
 mkFailureResponse :: BaseUrl -> Request -> ResponseF BSL.ByteString -> ClientError
 mkFailureResponse burl request =

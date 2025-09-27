@@ -1,10 +1,5 @@
 {-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MonoLocalBinds             #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 module Servant.Client.JSaddle.Internal.Types where
@@ -15,8 +10,6 @@ import           Prelude.Compat
 import           Control.Monad.Codensity
 import           Control.Exception
                  (Exception)
-import           Control.Monad.Catch
-                 (MonadCatch, MonadThrow)
 import           Control.Monad.Error.Class
                  (MonadError (..))
 import           Control.Monad.IO.Class
@@ -58,8 +51,6 @@ newtype ClientM a = ClientM
   { fromClientM :: ReaderT ClientEnv (ExceptT ClientError (Codensity DOM)) a }
   deriving ( Functor, Applicative, Monad, MonadIO, Generic
            , MonadReader ClientEnv, MonadError ClientError)
-deriving instance MonadThrow (Codensity DOM) => MonadThrow ClientM
-deriving instance MonadCatch (Codensity DOM) => MonadCatch ClientM
 
 -- | Try clients in order, last error is preserved.
 instance Alt ClientM where
